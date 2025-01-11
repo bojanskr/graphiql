@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { useStorageContext } from './storage';
 
 /**
@@ -7,7 +7,7 @@ import { useStorageContext } from './storage';
  */
 export type Theme = 'light' | 'dark' | null;
 
-export function useTheme() {
+export function useTheme(defaultTheme: Theme = null) {
   const storageContext = useStorageContext();
 
   const [theme, setThemeInternal] = useState<Theme>(() => {
@@ -26,7 +26,7 @@ export function useTheme() {
           // Remove the invalid stored value
           storageContext.set(STORAGE_KEY, '');
         }
-        return null;
+        return defaultTheme;
     }
   });
 
@@ -41,15 +41,12 @@ export function useTheme() {
     }
   }, [theme]);
 
-  const setTheme = useCallback(
-    (newTheme: Theme) => {
-      storageContext?.set(STORAGE_KEY, newTheme || '');
-      setThemeInternal(newTheme);
-    },
-    [storageContext],
-  );
+  const setTheme = (newTheme: Theme) => {
+    storageContext?.set(STORAGE_KEY, newTheme || '');
+    setThemeInternal(newTheme);
+  };
 
-  return useMemo(() => ({ theme, setTheme }), [theme, setTheme]);
+  return { theme, setTheme };
 }
 
 const STORAGE_KEY = 'theme';

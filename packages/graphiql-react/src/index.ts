@@ -1,3 +1,5 @@
+'use no memo';
+
 import './style/root.css';
 
 export {
@@ -16,8 +18,11 @@ export {
   useQueryEditor,
   useResponseEditor,
   useVariableEditor,
+  useEditorState,
   useOperationsEditorState,
+  useOptimisticState,
   useVariablesEditorState,
+  useHeadersEditorState,
   VariableEditor,
 } from './editor';
 export {
@@ -68,6 +73,7 @@ export {
 } from './storage';
 export { useTheme } from './theme';
 export { useDragResize } from './utility/resize';
+export { isMacOs } from './utility/is-macos';
 
 export * from './icons';
 export * from './ui';

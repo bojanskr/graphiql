@@ -1,3 +1,5 @@
+[![GraphQLConf 2024 Banner: September 10-12, San Francisco. Hosted by the GraphQL Foundation](https://github.com/user-attachments/assets/bdb8cd5d-5186-4ece-b06b-b00a499b7868)](https://graphql.org/conf/2024/?utm_source=github&utm_medium=graphiql&utm_campaign=readme)
+
 <!-- @format -->
 
 # GraphQL IDE Monorepo
@@ -243,7 +245,7 @@ our discord channels!):
 - [@n1ru4l](https://github.com/n1ru4l)
 - [@acao](https://github.com/acao)
 - [@stonexer](https://github.com/stonexer)
-- [@B2o5T](https://github.com/B2o5T)
+- [@dimaMachina](https://github.com/dimaMachina)
 - [@dotansimha](https://github.com/dotansimha)
 - [@saihaj](https://github.com/saihaj)
 - [@jonathanawesome](https://github.com/jonathanawesome)
