@@ -3,7 +3,8 @@ import type { EditorChange, EditorConfiguration } from 'codemirror';
 import type { SchemaReference } from 'codemirror-graphql/utils/SchemaReference';
 import copyToClipboard from 'copy-to-clipboard';
 import { parse, print } from 'graphql';
-import { useCallback, useEffect, useMemo } from 'react';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- TODO: check why query builder update only 1st field https://github.com/graphql/graphiql/issues/3836
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useExplorerContext } from '../explorer';
 import { usePluginContext } from '../plugin';
@@ -16,7 +17,7 @@ import { CodeMirrorEditor } from './types';
 
 export function useSynchronizeValue(
   editor: CodeMirrorEditor | null,
-  value: string | undefined,
+  value?: string,
 ) {
   useEffect(() => {
     if (editor && typeof value === 'string' && value !== editor.getValue()) {
@@ -65,7 +66,7 @@ export function useChangeHandler(
 
     const handleChange = (
       editorInstance: CodeMirrorEditor,
-      changeObj: EditorChange | undefined,
+      changeObj?: EditorChange,
     ) => {
       // When we signal a change manually without actually changing anything
       // we don't want to invoke the callback.
@@ -130,7 +131,7 @@ type EmptyCallback = () => void;
 export function useKeyMap(
   editor: CodeMirrorEditor | null,
   keys: string[],
-  callback: EmptyCallback | undefined,
+  callback?: EmptyCallback,
 ) {
   useEffect(() => {
     if (!editor) {
@@ -163,12 +164,18 @@ export type UseCopyQueryArgs = {
   onCopyQuery?: (query: string) => void;
 };
 
+// To make react-compiler happy, otherwise complains about - Hooks may not be referenced as normal values
+const _useCopyQuery = useCopyQuery;
+const _useMergeQuery = useMergeQuery;
+const _usePrettifyEditors = usePrettifyEditors;
+const _useAutoCompleteLeafs = useAutoCompleteLeafs;
+
 export function useCopyQuery({ caller, onCopyQuery }: UseCopyQueryArgs = {}) {
   const { queryEditor } = useEditorContext({
     nonNull: true,
-    caller: caller || useCopyQuery,
+    caller: caller || _useCopyQuery,
   });
-  return useCallback(() => {
+  return () => {
     if (!queryEditor) {
       return;
     }
@@ -177,7 +184,7 @@ export function useCopyQuery({ caller, onCopyQuery }: UseCopyQueryArgs = {}) {
     copyToClipboard(query);
 
     onCopyQuery?.(query);
-  }, [queryEditor, onCopyQuery]);
+  };
 }
 
 type UseMergeQueryArgs = {
@@ -190,10 +197,13 @@ type UseMergeQueryArgs = {
 export function useMergeQuery({ caller }: UseMergeQueryArgs = {}) {
   const { queryEditor } = useEditorContext({
     nonNull: true,
-    caller: caller || useMergeQuery,
+    caller: caller || _useMergeQuery,
   });
-  const { schema } = useSchemaContext({ nonNull: true, caller: useMergeQuery });
-  return useCallback(() => {
+  const { schema } = useSchemaContext({
+    nonNull: true,
+    caller: _useMergeQuery,
+  });
+  return () => {
     const documentAST = queryEditor?.documentAST;
     const query = queryEditor?.getValue();
     if (!documentAST || !query) {
@@ -201,7 +211,7 @@ export function useMergeQuery({ caller }: UseMergeQueryArgs = {}) {
     }
 
     queryEditor.setValue(print(mergeAst(documentAST, schema)));
-  }, [queryEditor, schema]);
+  };
 }
 
 type UsePrettifyEditorsArgs = {
@@ -214,9 +224,9 @@ type UsePrettifyEditorsArgs = {
 export function usePrettifyEditors({ caller }: UsePrettifyEditorsArgs = {}) {
   const { queryEditor, headerEditor, variableEditor } = useEditorContext({
     nonNull: true,
-    caller: caller || usePrettifyEditors,
+    caller: caller || _usePrettifyEditors,
   });
-  return useCallback(() => {
+  return () => {
     if (variableEditor) {
       const variableEditorContent = variableEditor.getValue();
       try {
@@ -258,7 +268,7 @@ export function usePrettifyEditors({ caller }: UsePrettifyEditorsArgs = {}) {
         queryEditor.setValue(prettifiedEditorContent);
       }
     }
-  }, [queryEditor, variableEditor, headerEditor]);
+  };
 }
 
 export type UseAutoCompleteLeafsArgs = {
@@ -280,13 +290,13 @@ export function useAutoCompleteLeafs({
 }: UseAutoCompleteLeafsArgs = {}) {
   const { schema } = useSchemaContext({
     nonNull: true,
-    caller: caller || useAutoCompleteLeafs,
+    caller: caller || _useAutoCompleteLeafs,
   });
   const { queryEditor } = useEditorContext({
     nonNull: true,
-    caller: caller || useAutoCompleteLeafs,
+    caller: caller || _useAutoCompleteLeafs,
   });
-  return useCallback(() => {
+  return () => {
     if (!queryEditor) {
       return;
     }
@@ -330,49 +340,130 @@ export function useAutoCompleteLeafs({
     }
 
     return result;
-  }, [getDefaultFieldNames, queryEditor, schema]);
+  };
 }
 
 // https://react.dev/learn/you-might-not-need-an-effect
 
+export const useEditorState = (editor: 'query' | 'variable' | 'header') => {
+  'use no memo'; // eslint-disable-line react-compiler/react-compiler -- TODO: check why query builder update only 1st field https://github.com/graphql/graphiql/issues/3836
+  const context = useEditorContext({
+    nonNull: true,
+  });
+
+  const editorInstance = context[`${editor}Editor` as const];
+  let valueString = '';
+  const editorValue = editorInstance?.getValue() ?? false;
+  if (editorValue && editorValue.length > 0) {
+    valueString = editorValue;
+  }
+
+  const handleEditorValue = useCallback(
+    (value: string) => editorInstance?.setValue(value),
+    [editorInstance],
+  );
+  return useMemo<[string, (val: string) => void]>(
+    () => [valueString, handleEditorValue],
+    [valueString, handleEditorValue],
+  );
+};
+
 /**
  * useState-like hook for current tab operations editor state
  */
-export function useOperationsEditorState(): [
-  opString: string,
-  handleEditOperations: (content: string) => void,
-] {
-  const { queryEditor } = useEditorContext({
-    nonNull: true,
-  });
-  const opString = queryEditor?.getValue() ?? '';
-  const handleEditOperations = useCallback(
-    (value: string) => queryEditor?.setValue(value),
-    [queryEditor],
-  );
-  return useMemo(
-    () => [opString, handleEditOperations],
-    [opString, handleEditOperations],
-  );
-}
+export const useOperationsEditorState = (): [
+  operations: string,
+  setOperations: (content: string) => void,
+] => {
+  return useEditorState('query');
+};
 
 /**
- * useState-like hook for variables tab operations editor state
+ * useState-like hook for current tab variables editor state
  */
-export function useVariablesEditorState(): [
-  varsString: string,
-  handleEditVariables: (content: string) => void,
-] {
-  const { variableEditor } = useEditorContext({
-    nonNull: true,
+export const useVariablesEditorState = (): [
+  variables: string,
+  setVariables: (content: string) => void,
+] => {
+  return useEditorState('variable');
+};
+
+/**
+ * useState-like hook for current tab variables editor state
+ */
+export const useHeadersEditorState = (): [
+  headers: string,
+  setHeaders: (content: string) => void,
+] => {
+  return useEditorState('header');
+};
+
+/**
+ * Implements an optimistic caching strategy around a useState-like hook in
+ * order to prevent loss of updates when the hook has an internal delay and the
+ * update function is called again before the updated state is sent out.
+ *
+ * Use this as a wrapper around `useOperationsEditorState`,
+ * `useVariablesEditorState`, or `useHeadersEditorState` if you anticipate
+ * calling them with great frequency (due to, for instance, mouse, keyboard, or
+ * network events).
+ *
+ * Example:
+ *
+ * ```ts
+ * const [operationsString, handleEditOperations] =
+ *   useOptimisticState(useOperationsEditorState());
+ * ```
+ */
+export function useOptimisticState([
+  upstreamState,
+  upstreamSetState,
+]: ReturnType<typeof useEditorState>): ReturnType<typeof useEditorState> {
+  const lastStateRef = useRef({
+    /** The last thing that we sent upstream; we're expecting this back */
+    pending: null as string | null,
+    /** The last thing we received from upstream */
+    last: upstreamState,
   });
-  const varsString = variableEditor?.getValue() ?? '';
-  const handleEditVariables = useCallback(
-    (value: string) => variableEditor?.setValue(value),
-    [variableEditor],
-  );
-  return useMemo(
-    () => [varsString, handleEditVariables],
-    [varsString, handleEditVariables],
-  );
+
+  const [state, setOperationsText] = useState(upstreamState);
+
+  useEffect(() => {
+    if (lastStateRef.current.last === upstreamState) {
+      // No change; ignore
+    } else {
+      lastStateRef.current.last = upstreamState;
+      if (lastStateRef.current.pending === null) {
+        // Gracefully accept update from upstream
+        setOperationsText(upstreamState);
+      } else if (lastStateRef.current.pending === upstreamState) {
+        // They received our update and sent it back to us - clear pending, and
+        // send next if appropriate
+        lastStateRef.current.pending = null;
+        if (upstreamState !== state) {
+          // Change has occurred; upstream it
+          lastStateRef.current.pending = state;
+          upstreamSetState(state);
+        }
+      } else {
+        // They got a different update; overwrite our local state (!!)
+        lastStateRef.current.pending = null;
+        setOperationsText(upstreamState);
+      }
+    }
+  }, [upstreamState, state, upstreamSetState]);
+
+  const setState = (newState: string) => {
+    setOperationsText(newState);
+    if (
+      lastStateRef.current.pending === null &&
+      lastStateRef.current.last !== newState
+    ) {
+      // No pending updates and change has occurred... send it upstream
+      lastStateRef.current.pending = newState;
+      upstreamSetState(newState);
+    }
+  };
+
+  return [state, setState];
 }

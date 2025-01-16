@@ -9,8 +9,10 @@ import {
 } from 'graphql';
 import {
   FocusEventHandler,
+  // eslint-disable-next-line @typescript-eslint/no-restricted-imports
   useCallback,
   useEffect,
+  // eslint-disable-next-line @typescript-eslint/no-restricted-imports
   useMemo,
   useRef,
   useState,
@@ -24,8 +26,10 @@ import { useExplorerContext } from '../context';
 
 import './search.css';
 import { renderType } from './utils';
+import { isMacOs } from '../../utility/is-macos';
 
 export function Search() {
+  'use no memo'; // TODO: add test https://github.com/graphql/graphiql/issues/3842
   const { explorerNavStack, push } = useExplorerContext({
     nonNull: true,
     caller: Search,
@@ -103,7 +107,7 @@ export function Search() {
           onFocus={handleFocus}
           onBlur={handleFocus}
           onChange={event => setSearchValue(event.target.value)}
-          placeholder="&#x2318; K"
+          placeholder={`${isMacOs ? '⌘' : 'Ctrl'} K`}
           ref={inputRef}
           value={searchValue}
           data-cy="doc-explorer-input"
@@ -111,6 +115,7 @@ export function Search() {
       </div>
 
       {/* display on focus */}
+      {/* eslint-disable-next-line react-compiler/react-compiler */}
       {isFocused.current && (
         <Combobox.Options data-cy="doc-explorer-list">
           {results.within.length +
@@ -170,97 +175,95 @@ type FieldMatch = {
   argument?: GraphQLArgument;
 };
 
+// To make react-compiler happy, otherwise complains about - Hooks may not be referenced as normal values
+const _useSearchResults = useSearchResults;
+
 export function useSearchResults(caller?: Function) {
   const { explorerNavStack } = useExplorerContext({
     nonNull: true,
-    caller: caller || useSearchResults,
+    caller: caller || _useSearchResults,
   });
   const { schema } = useSchemaContext({
     nonNull: true,
-    caller: caller || useSearchResults,
+    caller: caller || _useSearchResults,
   });
 
   const navItem = explorerNavStack.at(-1)!;
 
-  return useCallback(
-    (searchValue: string) => {
-      const matches: {
-        within: FieldMatch[];
-        types: TypeMatch[];
-        fields: FieldMatch[];
-      } = {
-        within: [],
-        types: [],
-        fields: [],
-      };
+  return (searchValue: string) => {
+    const matches: {
+      within: FieldMatch[];
+      types: TypeMatch[];
+      fields: FieldMatch[];
+    } = {
+      within: [],
+      types: [],
+      fields: [],
+    };
 
-      if (!schema) {
-        return matches;
+    if (!schema) {
+      return matches;
+    }
+
+    const withinType = navItem.def;
+
+    const typeMap = schema.getTypeMap();
+    let typeNames = Object.keys(typeMap);
+
+    // Move the within type name to be the first searched.
+    if (withinType) {
+      typeNames = typeNames.filter(n => n !== withinType.name);
+      typeNames.unshift(withinType.name);
+    }
+    for (const typeName of typeNames) {
+      if (
+        matches.within.length + matches.types.length + matches.fields.length >=
+        100
+      ) {
+        break;
       }
 
-      const withinType = navItem.def;
-
-      const typeMap = schema.getTypeMap();
-      let typeNames = Object.keys(typeMap);
-
-      // Move the within type name to be the first searched.
-      if (withinType) {
-        typeNames = typeNames.filter(n => n !== withinType.name);
-        typeNames.unshift(withinType.name);
+      const type = typeMap[typeName];
+      if (withinType !== type && isMatch(typeName, searchValue)) {
+        matches.types.push({ type });
       }
-      for (const typeName of typeNames) {
-        if (
-          matches.within.length +
-            matches.types.length +
-            matches.fields.length >=
-          100
-        ) {
-          break;
-        }
 
-        const type = typeMap[typeName];
-        if (withinType !== type && isMatch(typeName, searchValue)) {
-          matches.types.push({ type });
-        }
+      if (
+        !isObjectType(type) &&
+        !isInterfaceType(type) &&
+        !isInputObjectType(type)
+      ) {
+        continue;
+      }
 
-        if (
-          !isObjectType(type) &&
-          !isInterfaceType(type) &&
-          !isInputObjectType(type)
-        ) {
-          continue;
-        }
+      const fields = type.getFields();
+      for (const fieldName in fields) {
+        const field = fields[fieldName];
+        let matchingArgs: GraphQLArgument[] | undefined;
 
-        const fields = type.getFields();
-        for (const fieldName in fields) {
-          const field = fields[fieldName];
-          let matchingArgs: GraphQLArgument[] | undefined;
-
-          if (!isMatch(fieldName, searchValue)) {
-            if ('args' in field) {
-              matchingArgs = field.args.filter(arg =>
-                isMatch(arg.name, searchValue),
-              );
-              if (matchingArgs.length === 0) {
-                continue;
-              }
-            } else {
+        if (!isMatch(fieldName, searchValue)) {
+          if ('args' in field) {
+            matchingArgs = field.args.filter(arg =>
+              isMatch(arg.name, searchValue),
+            );
+            if (matchingArgs.length === 0) {
               continue;
             }
+          } else {
+            continue;
           }
-
-          matches[withinType === type ? 'within' : 'fields'].push(
-            ...(matchingArgs
-              ? matchingArgs.map(argument => ({ type, field, argument }))
-              : [{ type, field }]),
-          );
         }
-      }
 
-      return matches;
-    },
-    [navItem.def, schema],
-  );
+        matches[withinType === type ? 'within' : 'fields'].push(
+          ...(matchingArgs
+            ? matchingArgs.map(argument => ({ type, field, argument }))
+            : [{ type, field }]),
+        );
+      }
+    }
+
+    return matches;
+  };
 }
 
 function isMatch(sourceText: string, searchValue: string): boolean {

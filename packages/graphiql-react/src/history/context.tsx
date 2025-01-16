@@ -1,5 +1,5 @@
 import { HistoryStore, QueryStoreItem, StorageAPI } from '@graphiql/toolkit';
-import { ReactNode, useCallback, useMemo, useRef, useState } from 'react';
+import { ReactNode, useState } from 'react';
 
 import { useStorageContext } from '../storage';
 import { createContextHook, createNullableContext } from '../utility/context';
@@ -87,77 +87,41 @@ export type HistoryContextProviderProps = {
  * any additional props they added for their needs (i.e., build their own functions that may save
  * to a backend instead of localStorage and might need an id property added to the QueryStoreItem)
  */
-export function HistoryContextProvider(props: HistoryContextProviderProps) {
+export function HistoryContextProvider({
+  maxHistoryLength = DEFAULT_HISTORY_LENGTH,
+  children,
+}: HistoryContextProviderProps) {
   const storage = useStorageContext();
-  const historyStore = useRef(
-    new HistoryStore(
+  const [historyStore] = useState(
+    () =>
       // Fall back to a noop storage when the StorageContext is empty
-      storage || new StorageAPI(null),
-      props.maxHistoryLength || DEFAULT_HISTORY_LENGTH,
-    ),
+      new HistoryStore(storage || new StorageAPI(null), maxHistoryLength),
   );
-  const [items, setItems] = useState(historyStore.current?.queries || []);
+  const [items, setItems] = useState(() => historyStore.queries || []);
 
-  const addToHistory: HistoryContextType['addToHistory'] = useCallback(
-    (operation: QueryStoreItem) => {
-      historyStore.current?.updateHistory(operation);
-      setItems(historyStore.current.queries);
+  const value: HistoryContextType = {
+    addToHistory(operation) {
+      historyStore.updateHistory(operation);
+      setItems(historyStore.queries);
     },
-    [],
-  );
-
-  const editLabel: HistoryContextType['editLabel'] = useCallback(
-    (operation: QueryStoreItem, index?: number) => {
-      historyStore.current.editLabel(operation, index);
-      setItems(historyStore.current.queries);
+    editLabel(operation, index) {
+      historyStore.editLabel(operation, index);
+      setItems(historyStore.queries);
     },
-    [],
-  );
-
-  const toggleFavorite: HistoryContextType['toggleFavorite'] = useCallback(
-    (operation: QueryStoreItem) => {
-      historyStore.current.toggleFavorite(operation);
-      setItems(historyStore.current.queries);
+    items,
+    toggleFavorite(operation) {
+      historyStore.toggleFavorite(operation);
+      setItems(historyStore.queries);
     },
-    [],
-  );
-
-  const setActive: HistoryContextType['setActive'] = useCallback(
-    (item: QueryStoreItem) => {
-      return item;
+    setActive: item => item,
+    deleteFromHistory(item, clearFavorites) {
+      historyStore.deleteHistory(item, clearFavorites);
+      setItems(historyStore.queries);
     },
-    [],
-  );
-
-  const deleteFromHistory: HistoryContextType['deleteFromHistory'] =
-    useCallback((item: QueryStoreItem, clearFavorites = false) => {
-      historyStore.current.deleteHistory(item, clearFavorites);
-      setItems(historyStore.current.queries);
-    }, []);
-
-  const value = useMemo<HistoryContextType>(
-    () => ({
-      addToHistory,
-      editLabel,
-      items,
-      toggleFavorite,
-      setActive,
-      deleteFromHistory,
-    }),
-    [
-      addToHistory,
-      editLabel,
-      items,
-      toggleFavorite,
-      setActive,
-      deleteFromHistory,
-    ],
-  );
+  };
 
   return (
-    <HistoryContext.Provider value={value}>
-      {props.children}
-    </HistoryContext.Provider>
+    <HistoryContext.Provider value={value}>{children}</HistoryContext.Provider>
   );
 }
 

@@ -6,23 +6,14 @@
     "composite": false,
     "jsx": "react",
     "baseUrl": ".",
-    "target": "es5"
+    "target": "es5",
+    "types": ["@testing-library/jest-dom", "vitest/globals"]
   },
   "include": ["src"],
-  "exclude": [
-    "**/__tests__/**",
-    "**/dist/**.*",
-    "**/*.spec.ts",
-    "**/*.spec.js",
-    "**/*-test.ts",
-    "**/*-test.js"
-  ],
+  "exclude": ["**/*.spec.tsx"],
   "references": [
     {
       "path": "../codemirror-graphql"
-    },
-    {
-      "path": "../graphiql-toolkit"
     },
     {
       "path": "../graphql-language-service"
