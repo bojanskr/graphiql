@@ -1,16 +1,21 @@
 import {
   Fetcher,
-  FetcherResultPayload,
   formatError,
   formatResult,
   isAsyncIterable,
   isObservable,
   Unsubscribable,
 } from '@graphiql/toolkit';
-import { ExecutionResult, FragmentDefinitionNode, print } from 'graphql';
+import {
+  ExecutionResult,
+  FragmentDefinitionNode,
+  GraphQLError,
+  print,
+} from 'graphql';
 import { getFragmentDependenciesForAST } from 'graphql-language-service';
-import { ReactNode, useCallback, useMemo, useRef, useState } from 'react';
+import { ReactNode, useRef, useState } from 'react';
 import setValue from 'set-value';
+import getValue from 'get-value';
 
 import { useAutoCompleteLeafs, useEditorContext } from './editor';
 import { UseAutoCompleteLeafsArgs } from './editor/hooks';
@@ -98,13 +103,13 @@ export function ExecutionContextProvider({
   const [subscription, setSubscription] = useState<Unsubscribable | null>(null);
   const queryIdRef = useRef(0);
 
-  const stop = useCallback(() => {
+  const stop = () => {
     subscription?.unsubscribe();
     setIsFetching(false);
     setSubscription(null);
-  }, [subscription]);
+  };
 
-  const run = useCallback<ExecutionContextType['run']>(async () => {
+  const run: ExecutionContextType['run'] = async () => {
     if (!queryEditor || !responseEditor) {
       return;
     }
@@ -181,9 +186,10 @@ export function ExecutionContextProvider({
       headers: headersString,
       operationName: opName,
     });
-
+    const _headers = headers ?? undefined;
+    const documentAST = queryEditor.documentAST ?? undefined;
     try {
-      let fullResponse: FetcherResultPayload = { data: {} };
+      const fullResponse: ExecutionResult = {};
       const handleResponse = (result: ExecutionResult) => {
         // A different query was dispatched in the meantime, so don't
         // show the results of this one.
@@ -202,40 +208,8 @@ export function ExecutionContextProvider({
         }
 
         if (maybeMultipart) {
-          const payload: FetcherResultPayload = {
-            data: fullResponse.data,
-          };
-          const maybeErrors = [
-            ...(fullResponse?.errors || []),
-            ...maybeMultipart.flatMap(i => i.errors).filter(Boolean),
-          ];
-
-          if (maybeErrors.length) {
-            payload.errors = maybeErrors;
-          }
-
           for (const part of maybeMultipart) {
-            // We pull out errors here, so we dont include it later
-            const { path, data, errors, ...rest } = part;
-            if (path) {
-              if (!data) {
-                throw new Error(
-                  `Expected part to contain a data property, but got ${part}`,
-                );
-              }
-
-              setValue(payload.data, path, data, { merge: true });
-            } else if (data) {
-              // If there is no path, we don't know what to do with the payload,
-              // so we just set it.
-              payload.data = data;
-            }
-
-            // Ensures we also bring extensions and alike along for the ride
-            fullResponse = {
-              ...payload,
-              ...rest,
-            };
+            mergeIncrementalResult(fullResponse, part);
           }
 
           setIsFetching(false);
@@ -254,8 +228,8 @@ export function ExecutionContextProvider({
           operationName: opName,
         },
         {
-          headers: headers ?? undefined,
-          documentAST: queryEditor.documentAST ?? undefined,
+          headers: _headers,
+          documentAST,
         },
       );
 
@@ -286,9 +260,7 @@ export function ExecutionContextProvider({
         setSubscription({
           unsubscribe: () => value[Symbol.asyncIterator]().return?.(),
         });
-        for await (const result of value) {
-          handleResponse(result);
-        }
+        await handleAsyncResults(handleResponse, value);
         setIsFetching(false);
         setSubscription(null);
       } else {
@@ -299,38 +271,32 @@ export function ExecutionContextProvider({
       setResponse(formatError(error));
       setSubscription(null);
     }
-  }, [
-    autoCompleteLeafs,
-    externalFragments,
-    fetcher,
-    headerEditor,
-    history,
-    operationName,
-    queryEditor,
-    responseEditor,
-    stop,
-    subscription,
-    updateActiveTabValues,
-    variableEditor,
-  ]);
+  };
 
   const isSubscribed = Boolean(subscription);
-  const value = useMemo<ExecutionContextType>(
-    () => ({
-      isFetching,
-      isSubscribed,
-      operationName: operationName ?? null,
-      run,
-      stop,
-    }),
-    [isFetching, isSubscribed, operationName, run, stop],
-  );
+  const value: ExecutionContextType = {
+    isFetching,
+    isSubscribed,
+    operationName: operationName ?? null,
+    run,
+    stop,
+  };
 
   return (
     <ExecutionContext.Provider value={value}>
       {children}
     </ExecutionContext.Provider>
   );
+}
+
+// Extract function because react-compiler doesn't support `for await` yet
+async function handleAsyncResults(
+  onResponse: (result: ExecutionResult) => void,
+  value: any,
+): Promise<void> {
+  for await (const result of value) {
+    onResponse(result);
+  }
 }
 
 export const useExecutionContext = createContextHook(ExecutionContext);
@@ -360,4 +326,128 @@ function tryParseJsonObject({
     throw new Error(errorMessageType);
   }
   return parsed;
+}
+
+type IncrementalResult = {
+  data?: Record<string, unknown> | null;
+  errors?: ReadonlyArray<GraphQLError>;
+  extensions?: Record<string, unknown>;
+  hasNext?: boolean;
+  path?: ReadonlyArray<string | number>;
+  incremental?: ReadonlyArray<IncrementalResult>;
+  label?: string;
+  items?: ReadonlyArray<Record<string, unknown>> | null;
+  pending?: ReadonlyArray<{ id: string; path: ReadonlyArray<string | number> }>;
+  completed?: ReadonlyArray<{
+    id: string;
+    errors?: ReadonlyArray<GraphQLError>;
+  }>;
+  id?: string;
+  subPath?: ReadonlyArray<string | number>;
+};
+
+const pathsMap = new WeakMap<
+  ExecutionResult,
+  Map<string, ReadonlyArray<string | number>>
+>();
+
+/**
+ * @param executionResult The complete execution result object which will be
+ * mutated by merging the contents of the incremental result.
+ * @param incrementalResult The incremental result that will be merged into the
+ * complete execution result.
+ */
+function mergeIncrementalResult(
+  executionResult: IncrementalResult,
+  incrementalResult: IncrementalResult,
+): void {
+  let path: ReadonlyArray<string | number> | undefined = [
+    'data',
+    ...(incrementalResult.path ?? []),
+  ];
+
+  for (const result of [executionResult, incrementalResult]) {
+    if (result.pending) {
+      let paths = pathsMap.get(executionResult);
+      if (paths === undefined) {
+        paths = new Map();
+        pathsMap.set(executionResult, paths);
+      }
+
+      for (const { id, path: pendingPath } of result.pending) {
+        paths.set(id, ['data', ...pendingPath]);
+      }
+    }
+  }
+
+  const { items } = incrementalResult;
+  if (items) {
+    const { id } = incrementalResult;
+    if (id) {
+      path = pathsMap.get(executionResult)?.get(id);
+      if (path === undefined) {
+        throw new Error('Invalid incremental delivery format.');
+      }
+
+      const list = getValue(executionResult, path.join('.'));
+      list.push(...items);
+    } else {
+      path = ['data', ...(incrementalResult.path ?? [])];
+      for (const item of items) {
+        setValue(executionResult, path.join('.'), item);
+        // Increment the last path segment (the array index) to merge the next item at the next index
+        // @ts-expect-error -- (path[path.length - 1] as number)++ breaks react compiler
+        path[path.length - 1]++;
+      }
+    }
+  }
+
+  const { data } = incrementalResult;
+  if (data) {
+    const { id } = incrementalResult;
+    if (id) {
+      path = pathsMap.get(executionResult)?.get(id);
+      if (path === undefined) {
+        throw new Error('Invalid incremental delivery format.');
+      }
+      const { subPath } = incrementalResult;
+      if (subPath !== undefined) {
+        path = [...path, ...subPath];
+      }
+    }
+    setValue(executionResult, path.join('.'), data, {
+      merge: true,
+    });
+  }
+
+  if (incrementalResult.errors) {
+    executionResult.errors ||= [];
+    (executionResult.errors as GraphQLError[]).push(
+      ...incrementalResult.errors,
+    );
+  }
+
+  if (incrementalResult.extensions) {
+    setValue(executionResult, 'extensions', incrementalResult.extensions, {
+      merge: true,
+    });
+  }
+
+  if (incrementalResult.incremental) {
+    for (const incrementalSubResult of incrementalResult.incremental) {
+      mergeIncrementalResult(executionResult, incrementalSubResult);
+    }
+  }
+
+  if (incrementalResult.completed) {
+    // Remove tracking and add additional errors
+    for (const { id, errors } of incrementalResult.completed) {
+      pathsMap.get(executionResult)?.delete(id);
+
+      if (errors) {
+        executionResult.errors ||= [];
+        (executionResult.errors as GraphQLError[]).push(...errors);
+      }
+    }
+  }
 }

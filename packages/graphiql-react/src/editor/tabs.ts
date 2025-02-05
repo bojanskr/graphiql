@@ -1,4 +1,7 @@
+'use no memo'; // can't figure why it isn't optimized
+
 import { StorageAPI } from '@graphiql/toolkit';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- fixme
 import { useCallback, useMemo } from 'react';
 
 import debounce from '../utility/debounce';
@@ -258,11 +261,13 @@ export function useSetEditorValues({
   variableEditor,
   headerEditor,
   responseEditor,
+  defaultHeaders,
 }: {
   queryEditor: CodeMirrorEditorWithOperationFacts | null;
   variableEditor: CodeMirrorEditor | null;
   headerEditor: CodeMirrorEditor | null;
   responseEditor: CodeMirrorEditor | null;
+  defaultHeaders?: string;
 }) {
   return useCallback(
     ({
@@ -278,10 +283,10 @@ export function useSetEditorValues({
     }) => {
       queryEditor?.setValue(query ?? '');
       variableEditor?.setValue(variables ?? '');
-      headerEditor?.setValue(headers ?? '');
+      headerEditor?.setValue(headers ?? defaultHeaders ?? '');
       responseEditor?.setValue(response ?? '');
     },
-    [headerEditor, queryEditor, responseEditor, variableEditor],
+    [headerEditor, queryEditor, responseEditor, variableEditor, defaultHeaders],
   );
 }
 
